@@ -1,5 +1,5 @@
 from typing import List, Dict
-from database import Database
+from .database import Database
 
 async def get_products_by_platform(platform: str, db: Database) -> List[Dict]:
     """Retrieve products for a specific platform."""

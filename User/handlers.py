@@ -12,10 +12,10 @@ from telegram.ext import (
     ContextTypes,
 )
 from telegram.error import TelegramError
-from database import Database
-from catalog import get_products_by_platform, get_product_by_id, search_products
-from config import CATEGORIES
-from utils import format_price, is_valid_ethiopian_phone
+from .database import Database
+from .catalog import get_products_by_platform, get_product_by_id, search_products
+from .config import CATEGORIES
+from .utils import format_price, is_valid_ethiopian_phone
 import re
 import os
 from typing import Optional
