@@ -4,6 +4,8 @@ from flask import Flask, render_template, request, redirect, url_for, flash, ses
 import bcrypt
 from datetime import datetime, timedelta
 import json
+from telegram import Update
+from telegram.ext import Application
 
 # Use relative import for Database
 from .src.models.database import Database
@@ -14,13 +16,34 @@ app.secret_key = os.environ.get('Secret_Key')  # For session management
 app.config['SESSION_TYPE'] = 'filesystem'
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=2)
 
+# Telegram app for webhook
+telegram_app = None
+
+def set_telegram_app(app_instance):
+    global telegram_app
+    telegram_app = app_instance
+
 # Database paths
-DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'User', 'data.db')
-ADMIN_DB_PATH = os.path.join(os.path.dirname(__file__), 'instance', 'admin.db')
+DB_PATH = os.environ.get('DB_PATH', os.path.join(os.path.dirname(__file__), '..', 'User', 'data.db'))
+ADMIN_DB_PATH = os.environ.get('ADMIN_DB_PATH', os.path.join(os.path.dirname(__file__), 'instance', 'admin.db'))
 
 # Initialize database connections
 db = Database(DB_PATH)
 admin_db = Database(ADMIN_DB_PATH)
+
+# Webhook endpoint for Telegram
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    if telegram_app is None:
+        return "Telegram bot not initialized", 500
+    update = Update.de_json(request.get_json(), telegram_app.bot)
+    telegram_app.process_update(update)
+    return '', 200
+
+# Health check endpoint
+@app.route('/')
+def health_check():
+    return "Telegram bot is running", 200
 
 # Custom Jinja2 filter for timestamp conversion
 @app.template_filter('timestamp_to_date')
@@ -42,7 +65,7 @@ def login_required(f):
     return decorated_function
 
 # Routes
-@app.route('/')
+@app.route('/admin')
 def index():
     if 'admin_id' in session:
         return redirect(url_for('dashboard'))
@@ -1087,4 +1110,4 @@ if __name__ == '__main__':
     admin_db.disconnect()
     
     port = int(os.getenv('PORT', 8000))
-    app.run( host='0.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=port)
