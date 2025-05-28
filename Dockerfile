@@ -15,4 +15,4 @@ ENV PYTHONUNBUFFERED=1
 ENV PORT=8000
 
 # Run Gunicorn for the admin dashboard
-CMD ["gunicorn", "--bind", "0.0.0.0:$PORT", "wsgi:app"]
+CMD gunicorn --bind 0.0.0.0:$PORT --workers=4 wsgi:app
