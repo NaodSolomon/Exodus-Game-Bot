@@ -4,10 +4,10 @@ import logging
 import os
 import aiosqlite
 from telegram.ext import Application
-from handlers import command_handlers, conv_handler, callback_query_handler, inline_query_handler, error_handler
-from database import Database
-from utils import setup_logging
-from config import BOT_TOKEN
+from .handlers import command_handlers, conv_handler, callback_query_handler, inline_query_handler, error_handler
+from .database import Database
+from .utils import setup_logging
+from .config import BOT_TOKEN
 from admin_dashboard.app import set_telegram_app
 
 # Logger setup
