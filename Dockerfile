@@ -12,7 +12,7 @@ COPY . .
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
-ENV PORT=5000
+ENV PORT=8000
 
 # Run Gunicorn for the admin dashboard
 CMD ["gunicorn", "--bind", "0.0.0.0:$PORT", "wsgi:app"]
