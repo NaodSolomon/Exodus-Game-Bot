@@ -1,0 +1,102 @@
+{% extends 'base.html' %}
+
+{% block title %}Discounts | Exodus Game Store Admin{% endblock %}
+
+{% block content %}
+<div class="flex justify-between items-center mb-6">
+    <div>
+        <h1 class="text-2xl font-bold text-gray-800">Discount Management</h1>
+        <p class="text-gray-600">Manage special offers and promotions</p>
+    </div>
+</div>
+
+<div class="bg-white overflow-hidden shadow-md rounded-lg">
+    <div class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-gray-200">
+            <thead class="bg-gray-50">
+                <tr>
+                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Image</th>
+                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Game</th>
+                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Platform</th>
+                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Regular Price</th>
+                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Discount</th>
+                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Sale Price</th>
+                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Period</th>
+                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                </tr>
+            </thead>
+            <tbody class="bg-white divide-y divide-gray-200">
+                {% for product in products %}
+                <tr>
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        <img src="{{ product.image_url }}" alt="{{ product.name }}" class="h-12 w-12 object-cover rounded">
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        <div class="text-sm font-medium text-gray-900">{{ product.name }}</div>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        <div class="text-sm text-gray-500">{{ product.platform }}</div>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        <div class="text-sm text-gray-900">${{ product.price }}</div>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        {% if product.discount %}
+                            <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">
+                                {{ product.discount.discount_percentage }}%
+                            </span>
+                        {% else %}
+                            <span class="text-sm text-gray-500">None</span>
+                        {% endif %}
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        {% if product.discount %}
+                            <div class="text-sm font-medium text-red-600">
+                                ${{ (product.price|float * (1 - product.discount.discount_percentage|float / 100))|round(2) }}
+                            </div>
+                        {% else %}
+                            <span class="text-sm text-gray-500">-</span>
+                        {% endif %}
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        {% if product.discount %}
+                            <div class="text-sm text-gray-500">
+                                {% if product.discount.start_date and product.discount.end_date %}
+                                    {{ product.discount.start_date }} to {{ product.discount.end_date }}
+                                {% elif product.discount.start_date %}
+                                    From {{ product.discount.start_date }}
+                                {% elif product.discount.end_date %}
+                                    Until {{ product.discount.end_date }}
+                                {% else %}
+                                    Ongoing
+                                {% endif %}
+                            </div>
+                        {% else %}
+                            <span class="text-sm text-gray-500">-</span>
+                        {% endif %}
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                        {% if product.discount %}
+                            <form action="{{ url_for('delete_discount', product_id=product.id) }}" method="POST" class="inline" onsubmit="return confirm('Are you sure you want to remove this discount?');">
+                                <button type="submit" class="text-red-600 hover:text-red-900 mr-3">
+                                    <i class="fas fa-trash"></i> Remove
+                                </button>
+                            </form>
+                        {% else %}
+                            <a href="{{ url_for('add_discount', product_id=product.id) }}" class="text-indigo-600 hover:text-indigo-900">
+                                <i class="fas fa-plus"></i> Add
+                            </a>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+                {% if not products %}
+                <tr>
+                    <td colspan="8" class="px-6 py-4 text-center text-sm text-gray-500">No products found</td>
+                </tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

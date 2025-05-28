@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+*.env
+User/images/*
+!User/data.db
+!User/products.json
+!admin_dashboard/instance/admin.db

@@ -1,0 +1,47 @@
+[
+    {
+        "id": 1,
+        "name": "Elden Ring",
+        "price": 59.99,
+        "platform": ["PlayStation 5", "Xbox Series X", "PC"],
+        "description": "An action RPG from FromSoftware, set in a vast open world.",
+        "image_url": "images/Elden_Ring.jpg",
+        "stock": 20
+    },
+    {
+        "id": 2,
+        "name": "FC 25",
+        "price": 59.99,
+        "platform": ["PlayStation 4", "Xbox Series X", "Nintendo Switch"],
+        "description": "The latest football simulation from EA Sports.",
+        "image_url": "images/FC_25.jpg",
+        "stock": 15
+    },
+    {
+        "id": 3,
+        "name": "Halo Infinite",
+        "price": 49.99,
+        "platform": ["Xbox Series X", "PC"],
+        "description": "The next chapter in the Halo saga with multiplayer action.",
+        "image_url": "images/Halo_Infinite.jpg",
+        "stock": 10
+    },
+    {
+        "id": 4,
+        "name": "Forza Horizon 5",
+        "price": 59.99,
+        "platform": ["Xbox Series X", "PC"],
+        "description": "Open-world racing in a vibrant Mexico setting.",
+        "image_url": "images/Forza_Horizon_5.jpg",
+        "stock": 12
+    },
+    {
+        "id": 5,
+        "name": "Zelda: Tears of the Kingdom",
+        "price": 69.99,
+        "platform": ["Nintendo Switch"],
+        "description": "The sequel to Breath of the Wild, exploring Hyrule's skies.",
+        "image_url": "images/Zelda_Tears_of_the_Kingdom.jpg",
+        "stock": 8
+    }
+]

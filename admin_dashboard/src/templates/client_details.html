@@ -1,0 +1,171 @@
+{% extends 'base.html' %}
+
+{% block title %}Client Details | Exodus Game Store Admin{% endblock %}
+
+{% block content %}
+<div class="mb-6">
+    <div class="flex justify-between items-center">
+        <div>
+            <h1 class="text-2xl font-bold text-gray-800">Client Profile</h1>
+            <p class="text-gray-600">Detailed client information and order history</p>
+        </div>
+        <a href="{{ url_for('clients') }}" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-medium py-2 px-4 rounded-lg flex items-center">
+            <i class="fas fa-arrow-left mr-2"></i> Back to Clients
+        </a>
+    </div>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+    <!-- Client Information -->
+    <div class="bg-white p-6 rounded-lg shadow-md">
+        <div class="flex items-center mb-4">
+            <img src="https://ui-avatars.com/api/?name={{ client.first_name }}+{{ client.last_name }}&background=random" alt="{{ client.first_name }}" class="h-16 w-16 rounded-full mr-4">
+            <div>
+                <h2 class="text-lg font-semibold">{{ client.first_name }} {{ client.last_name }}</h2>
+                <p class="text-gray-600">@{{ client.username }}</p>
+            </div>
+        </div>
+        
+        <div class="mt-4 space-y-3">
+            <div>
+                <p class="text-sm text-gray-500">Client ID</p>
+                <p class="font-medium">#{{ client.id }}</p>
+            </div>
+            <div>
+                <p class="text-sm text-gray-500">Total Orders</p>
+                <p class="font-medium">{{ orders|length }}</p>
+            </div>
+            <div>
+                <p class="text-sm text-gray-500">Total Spent</p>
+                <p class="font-medium">${{ "%.2f"|format(orders|sum(attribute='total_price')|float) }}</p>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Order Statistics -->
+    <div class="bg-white p-6 rounded-lg shadow-md lg:col-span-2">
+        <h2 class="text-lg font-semibold mb-4">Order Statistics</h2>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div class="bg-gray-50 p-4 rounded-lg">
+                <p class="text-sm text-gray-500">Total Orders</p>
+                <p class="text-2xl font-semibold">{{ orders|length }}</p>
+            </div>
+            <div class="bg-gray-50 p-4 rounded-lg">
+                <p class="text-sm text-gray-500">Completed Orders</p>
+                <p class="text-2xl font-semibold">{{ orders|selectattr('status', 'equalto', 'delivered')|list|length }}</p>
+            </div>
+            <div class="bg-gray-50 p-4 rounded-lg">
+                <p class="text-sm text-gray-500">Pending Orders</p>
+                <p class="text-2xl font-semibold">{{ orders|selectattr('status', 'equalto', 'pending')|list|length }}</p>
+            </div>
+        </div>
+        
+        <div class="mt-6">
+            <canvas id="orderHistoryChart" height="200"></canvas>
+        </div>
+    </div>
+</div>
+
+<!-- Order History -->
+<div class="bg-white p-6 rounded-lg shadow-md">
+    <h2 class="text-lg font-semibold mb-4">Order History</h2>
+    <div class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-gray-200">
+            <thead class="bg-gray-50">
+                <tr>
+                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Order ID</th>
+                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
+                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total</th>
+                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Items</th>
+                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                </tr>
+            </thead>
+            <tbody class="bg-white divide-y divide-gray-200">
+                {% for order in orders %}
+                <tr>
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        <div class="text-sm font-medium text-gray-900">#{{ order.id }}</div>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        <div class="text-sm text-gray-500">{{ order.id|string|int|timestamp_to_date }}</div>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        <div class="text-sm text-gray-900">${{ order.total_price }}</div>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full 
+                            {% if order.status == 'delivered' %}bg-green-100 text-green-800
+                            {% elif order.status == 'cancelled' %}bg-red-100 text-red-800
+                            {% else %}bg-yellow-100 text-yellow-800{% endif %}">
+                            {{ order.status }}
+                        </span>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        <div class="text-sm text-gray-900">{{ order.items|length if order.items else '?' }}</div>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                        <a href="{{ url_for('order_details', order_id=order.id) }}" class="text-indigo-600 hover:text-indigo-900">
+                            <i class="fas fa-eye mr-1"></i> View
+                        </a>
+                    </td>
+                </tr>
+                {% endfor %}
+                {% if not orders %}
+                <tr>
+                    <td colspan="6" class="px-6 py-4 text-center text-sm text-gray-500">No orders found</td>
+                </tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Order History Chart
+    const orderCtx = document.getElementById('orderHistoryChart').getContext('2d');
+    const orderChart = new Chart(orderCtx, {
+        type: 'bar',
+        data: {
+            labels: [{% for order in orders %}'Order #{{ order.id }}'{% if not loop.last %}, {% endif %}{% endfor %}],
+            datasets: [{
+                label: 'Order Amount ($)',
+                data: [{% for order in orders %}{{ order.total_price }}{% if not loop.last %}, {% endif %}{% endfor %}],
+                backgroundColor: [
+                    {% for order in orders %}
+                    {% if order.status == 'delivered' %}'rgba(16, 185, 129, 0.6)'
+                    {% elif order.status == 'cancelled' %}'rgba(239, 68, 68, 0.6)'
+                    {% else %}'rgba(245, 158, 11, 0.6)'{% endif %}
+                    {% if not loop.last %}, {% endif %}
+                    {% endfor %}
+                ],
+                borderColor: [
+                    {% for order in orders %}
+                    {% if order.status == 'delivered' %}'rgba(16, 185, 129, 1)'
+                    {% elif order.status == 'cancelled' %}'rgba(239, 68, 68, 1)'
+                    {% else %}'rgba(245, 158, 11, 1)'{% endif %}
+                    {% if not loop.last %}, {% endif %}
+                    {% endfor %}
+                ],
+                borderWidth: 1
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    ticks: {
+                        callback: function(value) {
+                            return '$' + value;
+                        }
+                    }
+                }
+            }
+        }
+    });
+</script>
+{% endblock %}

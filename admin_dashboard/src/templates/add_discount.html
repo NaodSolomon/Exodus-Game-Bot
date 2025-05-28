@@ -1,0 +1,53 @@
+{% extends 'base.html' %}
+
+{% block title %}Add Discount | Exodus Game Store Admin{% endblock %}
+
+{% block content %}
+<div class="mb-6">
+    <div class="flex justify-between items-center">
+        <div>
+            <h1 class="text-2xl font-bold text-gray-800">Add Discount</h1>
+            <p class="text-gray-600">Create a special offer for {{ product.name }}</p>
+        </div>
+        <a href="{{ url_for('discounts') }}" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-medium py-2 px-4 rounded-lg flex items-center">
+            <i class="fas fa-arrow-left mr-2"></i> Back to Discounts
+        </a>
+    </div>
+</div>
+
+<div class="bg-white p-6 rounded-lg shadow-md mb-6">
+    <div class="flex items-center mb-6">
+        <img src="{{ product.image_url }}" alt="{{ product.name }}" class="h-20 w-20 object-cover rounded-md mr-4">
+        <div>
+            <h2 class="text-lg font-semibold">{{ product.name }}</h2>
+            <p class="text-gray-600">Platform: {{ product.platform }}</p>
+            <p class="text-gray-600">Regular Price: ${{ product.price }}</p>
+        </div>
+    </div>
+
+    <form method="POST" action="{{ url_for('add_discount', product_id=product.id) }}" class="space-y-6">
+        <div>
+            <label for="percentage" class="block text-sm font-medium text-gray-700">Discount Percentage (%)</label>
+            <input type="number" name="percentage" id="percentage" required min="1" max="99" step="0.1" class="mt-1 focus:ring-indigo-500 focus:border-indigo-500 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md">
+            <p class="mt-1 text-xs text-gray-500">Enter a value between 1 and 99</p>
+        </div>
+        
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+                <label for="start_date" class="block text-sm font-medium text-gray-700">Start Date (Optional)</label>
+                <input type="date" name="start_date" id="start_date" class="mt-1 focus:ring-indigo-500 focus:border-indigo-500 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md">
+            </div>
+            
+            <div>
+                <label for="end_date" class="block text-sm font-medium text-gray-700">End Date (Optional)</label>
+                <input type="date" name="end_date" id="end_date" class="mt-1 focus:ring-indigo-500 focus:border-indigo-500 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md">
+            </div>
+        </div>
+        
+        <div class="flex justify-end space-x-3">
+            <a href="{{ url_for('discounts') }}" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-medium py-2 px-4 rounded-lg">Cancel</a>
+            <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2 px-4 rounded-lg">Add Discount</button>
+        </div>
+    </form>
+</div>
+{% endblock %}

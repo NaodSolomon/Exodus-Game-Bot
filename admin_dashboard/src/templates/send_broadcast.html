@@ -1,0 +1,41 @@
+{% extends 'base.html' %}
+
+{% block title %}Send Broadcast | Exodus Game Store Admin{% endblock %}
+
+{% block content %}
+<div class="mb-6">
+    <div class="flex justify-between items-center">
+        <div>
+            <h1 class="text-2xl font-bold text-gray-800">Send Broadcast Message</h1>
+            <p class="text-gray-600">Send announcements to users via Telegram</p>
+        </div>
+        <a href="{{ url_for('broadcasts') }}" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-medium py-2 px-4 rounded-lg flex items-center">
+            <i class="fas fa-arrow-left mr-2"></i> Back to Broadcasts
+        </a>
+    </div>
+</div>
+
+<div class="bg-white p-6 rounded-lg shadow-md mb-6">
+    <form method="POST" action="{{ url_for('send_broadcast') }}" class="space-y-6">
+        <div>
+            <label for="message" class="block text-sm font-medium text-gray-700">Message</label>
+            <textarea name="message" id="message" rows="4" required class="mt-1 focus:ring-indigo-500 focus:border-indigo-500 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md"></textarea>
+            <p class="mt-1 text-xs text-gray-500">Enter the message you want to send to users</p>
+        </div>
+        
+        <div>
+            <label for="target_group" class="block text-sm font-medium text-gray-700">Target Group</label>
+            <select name="target_group" id="target_group" class="mt-1 block w-full py-2 px-3 border border-gray-300 bg-white rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
+                <option value="all">All Users</option>
+                <option value="customers">Customers Only</option>
+                <option value="recent">Recent Customers (Last 30 Days)</option>
+            </select>
+        </div>
+        
+        <div class="flex justify-end space-x-3">
+            <a href="{{ url_for('broadcasts') }}" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-medium py-2 px-4 rounded-lg">Cancel</a>
+            <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2 px-4 rounded-lg">Send Broadcast</button>
+        </div>
+    </form>
+</div>
+{% endblock %}

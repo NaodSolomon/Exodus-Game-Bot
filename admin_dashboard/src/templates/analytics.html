@@ -1,0 +1,243 @@
+{% extends 'base.html' %}
+
+{% block title %}Analytics | Exodus Game Store Admin{% endblock %}
+
+{% block content %}
+<div class="mb-6">
+    <h1 class="text-2xl font-bold text-gray-800">Analytics Dashboard</h1>
+    <p class="text-gray-600">Sales and performance metrics</p>
+</div>
+
+<!-- Summary Cards -->
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+    <div class="bg-white p-6 rounded-lg shadow-md border-l-4 border-indigo-500">
+        <div class="flex items-center">
+            <div class="p-3 rounded-full bg-indigo-100 text-indigo-500 mr-4">
+                <i class="fas fa-shopping-bag text-xl"></i>
+            </div>
+            <div>
+                <p class="text-sm text-gray-500 uppercase">Total Games Sold</p>
+                <p class="text-2xl font-semibold">{{ total_sold }}</p>
+            </div>
+        </div>
+    </div>
+    
+    <div class="bg-white p-6 rounded-lg shadow-md border-l-4 border-green-500">
+        <div class="flex items-center">
+            <div class="p-3 rounded-full bg-green-100 text-green-500 mr-4">
+                <i class="fas fa-dollar-sign text-xl"></i>
+            </div>
+            <div>
+                <p class="text-sm text-gray-500 uppercase">Monthly Revenue</p>
+                <p class="text-2xl font-semibold">${{ "%.2f"|format(monthly_revenue) }}</p>
+            </div>
+        </div>
+    </div>
+    
+    <div class="bg-white p-6 rounded-lg shadow-md border-l-4 border-purple-500">
+        <div class="flex items-center">
+            <div class="p-3 rounded-full bg-purple-100 text-purple-500 mr-4">
+                <i class="fas fa-trophy text-xl"></i>
+            </div>
+            <div>
+                <p class="text-sm text-gray-500 uppercase">Top Platform</p>
+                <p class="text-2xl font-semibold">{{ platform_sales[0].platform if platform_sales else 'N/A' }}</p>
+            </div>
+        </div>
+    </div>
+    
+    <div class="bg-white p-6 rounded-lg shadow-md border-l-4 border-yellow-500">
+        <div class="flex items-center">
+            <div class="p-3 rounded-full bg-yellow-100 text-yellow-500 mr-4">
+                <i class="fas fa-gamepad text-xl"></i>
+            </div>
+            <div>
+                <p class="text-sm text-gray-500 uppercase">Top Game</p>
+                <p class="text-2xl font-semibold">{{ game_sales[0].name if game_sales else 'N/A' }}</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+    <!-- Sales Trend Chart -->
+    <div class="bg-white p-6 rounded-lg shadow-md">
+        <h2 class="text-lg font-semibold mb-4">Monthly Sales Trend</h2>
+        <div class="h-64">
+            <canvas id="salesTrendChart"></canvas>
+        </div>
+    </div>
+    
+    <!-- Platform Distribution Chart -->
+    <div class="bg-white p-6 rounded-lg shadow-md">
+        <h2 class="text-lg font-semibold mb-4">Revenue by Platform</h2>
+        <div class="h-64">
+            <canvas id="platformRevenueChart"></canvas>
+        </div>
+    </div>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+    <!-- Top Selling Games -->
+    <div class="bg-white p-6 rounded-lg shadow-md">
+        <h2 class="text-lg font-semibold mb-4">Top Selling Games</h2>
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Game</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Platform</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Units Sold</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                    {% for game in game_sales %}
+                    <tr>
+                        <td class="px-4 py-3 whitespace-nowrap">{{ game.name }}</td>
+                        <td class="px-4 py-3 whitespace-nowrap">{{ game.platform }}</td>
+                        <td class="px-4 py-3 whitespace-nowrap">{{ game.total }}</td>
+                    </tr>
+                    {% endfor %}
+                    {% if not game_sales %}
+                    <tr>
+                        <td colspan="3" class="px-4 py-3 text-center text-sm text-gray-500">No data available</td>
+                    </tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    
+    <!-- Revenue by Game -->
+    <div class="bg-white p-6 rounded-lg shadow-md">
+        <h2 class="text-lg font-semibold mb-4">Revenue by Game</h2>
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Game</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Platform</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Revenue</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                    {% for game in game_revenue %}
+                    <tr>
+                        <td class="px-4 py-3 whitespace-nowrap">{{ game.name }}</td>
+                        <td class="px-4 py-3 whitespace-nowrap">{{ game.platform }}</td>
+                        <td class="px-4 py-3 whitespace-nowrap">${{ "%.2f"|format(game.revenue) }}</td>
+                    </tr>
+                    {% endfor %}
+                    {% if not game_revenue %}
+                    <tr>
+                        <td colspan="3" class="px-4 py-3 text-center text-sm text-gray-500">No data available</td>
+                    </tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Sales Trend Chart
+    const salesCtx = document.getElementById('salesTrendChart').getContext('2d');
+    const salesChart = new Chart(salesCtx, {
+        type: 'line',
+        data: {
+            labels: [{% for item in sales_trend %}'{{ item.month }}'{% if not loop.last %}, {% endif %}{% endfor %}],
+            datasets: [
+                {
+                    label: 'Revenue ($)',
+                    data: [{% for item in sales_trend %}{{ item.revenue }}{% if not loop.last %}, {% endif %}{% endfor %}],
+                    backgroundColor: 'rgba(79, 70, 229, 0.2)',
+                    borderColor: 'rgba(79, 70, 229, 1)',
+                    borderWidth: 2,
+                    yAxisID: 'y',
+                    tension: 0.3
+                },
+                {
+                    label: 'Orders',
+                    data: [{% for item in sales_trend %}{{ item.order_count }}{% if not loop.last %}, {% endif %}{% endfor %}],
+                    backgroundColor: 'rgba(245, 158, 11, 0.2)',
+                    borderColor: 'rgba(245, 158, 11, 1)',
+                    borderWidth: 2,
+                    yAxisID: 'y1',
+                    tension: 0.3
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                y: {
+                    type: 'linear',
+                    display: true,
+                    position: 'left',
+                    beginAtZero: true,
+                    ticks: {
+                        callback: function(value) {
+                            return '$' + value;
+                        }
+                    }
+                },
+                y1: {
+                    type: 'linear',
+                    display: true,
+                    position: 'right',
+                    beginAtZero: true,
+                    grid: {
+                        drawOnChartArea: false
+                    }
+                }
+            }
+        }
+    });
+
+    // Platform Revenue Chart
+    const platformCtx = document.getElementById('platformRevenueChart').getContext('2d');
+    const platformChart = new Chart(platformCtx, {
+        type: 'doughnut',
+        data: {
+            labels: [{% for platform in platform_revenue %}'{{ platform.platform }}'{% if not loop.last %}, {% endif %}{% endfor %}],
+            datasets: [{
+                data: [{% for platform in platform_revenue %}{{ platform.revenue }}{% if not loop.last %}, {% endif %}{% endfor %}],
+                backgroundColor: [
+                    'rgba(79, 70, 229, 0.8)',
+                    'rgba(16, 185, 129, 0.8)',
+                    'rgba(245, 158, 11, 0.8)',
+                    'rgba(239, 68, 68, 0.8)',
+                    'rgba(107, 114, 128, 0.8)',
+                    'rgba(37, 99, 235, 0.8)',
+                    'rgba(217, 70, 239, 0.8)'
+                ],
+                borderWidth: 1
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'right'
+                },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            let label = context.label || '';
+                            if (label) {
+                                label += ': ';
+                            }
+                            label += '$' + context.raw;
+                            return label;
+                        }
+                    }
+                }
+            }
+        }
+    });
+</script>
+{% endblock %}

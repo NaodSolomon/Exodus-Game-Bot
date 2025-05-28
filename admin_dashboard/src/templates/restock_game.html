@@ -1,0 +1,41 @@
+{% extends 'base.html' %}
+
+{% block title %}Restock Game | Exodus Game Store Admin{% endblock %}
+
+{% block content %}
+<div class="mb-6">
+    <h1 class="text-2xl font-bold text-gray-800">Restock Game</h1>
+    <p class="text-gray-600">Update stock quantity for {{ game.name }}</p>
+</div>
+
+<div class="bg-white p-6 rounded-lg shadow-md mb-6">
+    <div class="flex items-center mb-4">
+        <img src="{{ game.image_url }}" alt="{{ game.name }}" class="h-20 w-20 object-cover rounded-md mr-4">
+        <div>
+            <h2 class="text-lg font-semibold">{{ game.name }}</h2>
+            <p class="text-gray-600">Platform: {{ game.platform }}</p>
+            <p class="text-gray-600">Price: ${{ game.price }}</p>
+            <p class="text-gray-600">Current Stock: 
+                <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full 
+                    {% if game.stock < 5 %}bg-red-100 text-red-800
+                    {% elif game.stock < 10 %}bg-yellow-100 text-yellow-800
+                    {% else %}bg-green-100 text-green-800{% endif %}">
+                    {{ game.stock }}
+                </span>
+            </p>
+        </div>
+    </div>
+
+    <form method="POST" action="{{ url_for('restock_game', game_id=game.id) }}">
+        <div class="mb-4">
+            <label for="stock" class="block text-sm font-medium text-gray-700">New Stock Quantity</label>
+            <input type="number" name="stock" id="stock" required min="0" value="{{ game.stock }}" class="mt-1 focus:ring-indigo-500 focus:border-indigo-500 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md">
+        </div>
+        
+        <div class="flex justify-end space-x-3">
+            <a href="{{ url_for('games') }}" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-medium py-2 px-4 rounded-lg">Cancel</a>
+            <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2 px-4 rounded-lg">Update Stock</button>
+        </div>
+    </form>
+</div>
+{% endblock %}
