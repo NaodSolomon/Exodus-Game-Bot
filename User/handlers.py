@@ -1,8 +1,9 @@
+# Corrected User/handlers.py for Async Telegram & Sync DB
+
 import logging
-import aiosqlite
+import sqlite3 # Use synchronous sqlite3
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, InlineQueryResultArticle, InputTextMessageContent
 from telegram.ext import (
-    Application,
     CommandHandler,
     CallbackQueryHandler,
     InlineQueryHandler,
@@ -11,36 +12,52 @@ from telegram.ext import (
     filters,
     ContextTypes,
 )
+from telegram.constants import ParseMode
 from telegram.error import TelegramError
-from .database import Database
-from .catalog import get_products_by_platform, get_product_by_id, search_products
+# Import the synchronous Database class
+from .database import Database as UserDatabase
 from .config import CATEGORIES
 from .utils import format_price, is_valid_ethiopian_phone
 import re
 import os
-from typing import Optional
+import json # For handling platform JSON
+from typing import Optional, List, Dict, Any
+from datetime import datetime
 
 # Logger setup
 logger = logging.getLogger(__name__)
 
-# Conversation states
+# Conversation states for order process
 SELECT_QUANTITY, CONFIRM_ORDER, COLLECT_NAME, COLLECT_EMAIL, COLLECT_PHONE, COLLECT_ADDRESS = range(6)
+
+# --- Database Helper --- 
+def get_db(context: ContextTypes.DEFAULT_TYPE) -> Optional[UserDatabase]:
+    """Gets the UserDatabase instance from bot_data."""
+    db = context.bot_data.get("user_db")
+    if not isinstance(db, UserDatabase):
+        logger.error("UserDatabase instance not found or invalid in bot_data.")
+        return None
+    return db
+
+# --- Command Handlers (Must be async) --- 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle the /start command."""
-    db = context.bot_data.get('db')
-    if not db:
-        db = Database()
-        context.bot_data['db'] = db
-    
     user = update.effective_user
+    db = get_db(context)
+    if not db:
+        await update.message.reply_text("Error: Bot database is not configured.")
+        return
+
     try:
-        await db.add_user(
+        db.connect() # Sync DB connect
+        db.add_user(
             user_id=user.id,
             username=user.username or "N/A",
             first_name=user.first_name or "",
             last_name=user.last_name or ""
         )
+        logger.info(f"User {user.id} added/updated.")
     except Exception as e:
         logger.error(f"Failed to add user {user.id} to database: {e}", exc_info=True)
         await update.message.reply_text(
@@ -48,7 +65,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]])
         )
         return
-    
+    finally:
+        if db: db.disconnect() # Sync DB disconnect
+
     keyboard = [
         [InlineKeyboardButton(category, callback_data=f"platform:{category}") for category in CATEGORIES],
         [InlineKeyboardButton("🛒 View Cart", callback_data="view_cart")],
@@ -56,745 +75,651 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
-        "Welcome to Exodus Game Store! Browse games by platform, view your cart, or search for games.",
+        f"Welcome {user.first_name}! Browse games by platform, view your cart, or search.",
         reply_markup=reply_markup
     )
 
 async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle the /search command."""
     await update.message.reply_text(
-        "🔍 To search for games, use inline mode by typing '@BotName <game>' (e.g., '@BotName FC 25') "
-        "in any chat, or click below to start a search.",
+        "🔍 To search for games, use inline mode: type my username then your query (e.g., `@YourBotName FC 24`) in any chat, or click below.",
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("Start Search", switch_inline_query_current_chat="")]
+            [InlineKeyboardButton("Start Search Here", switch_inline_query_current_chat="")]
         ])
     )
     logger.info(f"User {update.effective_user.id} triggered /search command")
 
 async def cart_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle the /cart command."""
-    db = context.bot_data.get('db')
-    if not db:
-        db = Database()
-        context.bot_data['db'] = db
-    
+    """Handle the /cart command. Displays cart contents."""
     user_id = update.effective_user.id
-    cart_items = await db.get_cart(user_id)
-    
+    db = get_db(context)
+    if not db:
+        await update.message.reply_text("Error: Bot database is not configured.")
+        return
+
+    cart_items = []
+    total_price = 0
+    try:
+        db.connect() # Sync DB connect
+        cart_items = db.get_cart(user_id)
+        if cart_items:
+            total_price = sum(float(item["price"]) * item["quantity"] for item in cart_items)
+    except Exception as e:
+        logger.error(f"Error fetching cart for user {user_id}: {e}", exc_info=True)
+        await update.message.reply_text("❌ Error retrieving your cart.")
+        return
+    finally:
+        if db: db.disconnect() # Sync DB disconnect
+
     if not cart_items:
         await update.message.reply_text(
-            "Your cart is empty. Browse games with /start or search with /search!",
+            "Your cart is empty. Browse games with /start or search!",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]])
         )
         return
-    
-    total_price = 0
-    cart_text = "🛒 Your Cart:\n\n"
+
+    cart_text = "🛒 **Your Cart:**\n\n"
     keyboard = []
     for item in cart_items:
-        item_price = float(item['price'])
-        item_total = item_price * item['quantity']
-        total_price += item_total
+        try: platform_display = json.loads(item["platform"])[0]
+        except: platform_display = item["platform"]
+        item_price = float(item["price"])
+        item_total = item_price * item["quantity"]
         cart_text += (
-            f"🎮 {item['name']} ({', '.join(item['platform'])})\n"
-            f"Quantity: {item['quantity']}\n"
-            f"Price: {format_price(item_price)} each\n"
-            f"Subtotal: {format_price(item_total)}\n\n"
+            f"🎮 **{item["name"]}** ({platform_display})\n"
+            f"   Quantity: {item["quantity"]}\n"
+            f"   Price: {format_price(item_price)} each\n"
+            f"   Subtotal: {format_price(item_total)}\n\n"
         )
-        keyboard.append([InlineKeyboardButton(f"❌ Remove {item['name']}", callback_data=f"remove_from_cart:{item['product_id']}")])
-    
-    cart_text += f"💰 Total: {format_price(total_price)}"
+        keyboard.append([InlineKeyboardButton(f"❌ Remove {item["name"]}", callback_data=f"remove_from_cart:{item["product_id"]}")])
+
+    cart_text += f"💰 **Total: {format_price(total_price)}**"
     keyboard.extend([
         [InlineKeyboardButton("✅ Confirm Order", callback_data="confirm_order")],
         [InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]
     ])
-    await update.message.reply_text(cart_text, reply_markup=InlineKeyboardMarkup(keyboard))
+    await update.message.reply_text(cart_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
+
+# --- Callback Query Handler (Must be async) --- 
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[int]:
-    """Handle callback queries."""
+    """Handle callback queries from inline buttons."""
     query = update.callback_query
-    await query.answer()
-    
-    db = context.bot_data.get('db')
+    await query.answer() # Acknowledge callback
+
+    db = get_db(context)
     if not db:
-        db = Database()
-        context.bot_data['db'] = db
-    
+        # Need await here for the Telegram API call
+        await query.edit_message_text("Error: Bot database is not configured.")
+        return ConversationHandler.END # End conversation if DB fails
+
     data = query.data
     user_id = query.from_user.id
     is_inline = bool(query.inline_message_id)
-    is_photo = query.message.photo if query.message else False
-    logger.info(f"Handling callback for user {user_id}, data: {data}, inline: {is_inline}, is_photo: {is_photo}")
-    
-    async def edit_or_reply(text: str, reply_markup: Optional[InlineKeyboardMarkup] = None) -> None:
-        """Helper to edit inline message, photo caption, or reply in chat."""
+    message = query.message # The message the button was attached to
+
+    logger.info(f"Handling callback for user {user_id}, data: {data}, inline: {is_inline}")
+
+    # --- Helper to Edit Message (Must be async) --- 
+    async def edit_message(text: str, reply_markup: Optional[InlineKeyboardMarkup] = None, parse_mode: Optional[str] = None) -> None:
+        """Safely edits the original message (inline, photo caption, or regular)."""
         try:
             if is_inline:
-                await query.edit_message_text(text=text, reply_markup=reply_markup)
-            elif is_photo:
-                await query.message.edit_caption(caption=text, reply_markup=reply_markup)
-            elif query.message:
-                await query.message.edit_text(text=text, reply_markup=reply_markup)
-            else:
-                await context.bot.send_message(chat_id=user_id, text=text, reply_markup=reply_markup)
-        except TelegramError as e:
-            logger.error(f"Error editing/replying for user {user_id}: {e}", exc_info=True)
-            raise
-    
-    if data == "main_menu":
-        keyboard = [
-            [InlineKeyboardButton(category, callback_data=f"platform:{category}") for category in CATEGORIES],
-            [InlineKeyboardButton("🛒 View Cart", callback_data="view_cart")],
-            [InlineKeyboardButton("🔍 Search Games", switch_inline_query_current_chat="")]
-        ]
-        await edit_or_reply(
-            "Browse games by platform, view your cart, or search for games.",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-        return None
-    
-    elif data == "view_cart":
-        cart_items = await db.get_cart(user_id)
-        
-        if not cart_items:
-            await edit_or_reply(
-                "Your cart is empty. Browse games or search!",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]])
-            )
-            return None
-        
-        total_price = 0
-        cart_text = "🛒 Your Cart:\n\n"
-        keyboard = []
-        for item in cart_items:
-            item_price = float(item['price'])
-            item_total = item_price * item['quantity']
-            total_price += item_total
-            cart_text += (
-                f"🎮 {item['name']} ({', '.join(item['platform'])})\n"
-                f"Quantity: {item['quantity']}\n"
-                f"Price: {format_price(item_price)} each\n"
-                f"Subtotal: {format_price(item_total)}\n\n"
-            )
-            keyboard.append([InlineKeyboardButton(f"❌ Remove {item['name']}", callback_data=f"remove_from_cart:{item['product_id']}")])
-        
-        cart_text += f"💰 Total: {format_price(total_price)}"
-        keyboard.extend([
-            [InlineKeyboardButton("✅ Confirm Order", callback_data="confirm_order")],
-            [InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]
-        ])
-        await edit_or_reply(cart_text, reply_markup=InlineKeyboardMarkup(keyboard))
-        return CONFIRM_ORDER
-    
-    elif data.startswith("platform:"):
-        platform = data.split(":", 1)[1]
-        products = await get_products_by_platform(platform, db)
-        
-        if not products:
-            await edit_or_reply(
-                f"No games found for {platform}. Try another platform!",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]])
-            )
-            return None
-        
-        keyboard = [
-            [InlineKeyboardButton(product['name'], callback_data=f"product:{product['id']}")]
-            for product in products
-        ]
-        keyboard.append([InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")])
-        await edit_or_reply(
-            f"Games for {platform}:",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-        return None
-    
-    elif data.startswith("product:"):
-        product_id = int(data.split(":", 1)[1])
-        product = await get_product_by_id(product_id, db)
-        
-        if not product:
-            await edit_or_reply(
-                "Product not found. Try browsing again!",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]])
-            )
-            return None
-        
-        caption = (
-            f"🎮 {product['name']}\n"
-            f"Platform: {', '.join(product['platform'])}\n"
-            f"Price: {format_price(product['price'])}\n"
-            f"Stock: {product['stock']}\n"
-            f"Description: {product['description']}"
-        )
-        keyboard = [
-            [InlineKeyboardButton("🛒 Add to Cart", callback_data=f"add_to_cart:{product_id}")],
-            [InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]
-        ]
-        
-        try:
-            image_path = os.path.join(os.path.dirname(__file__), product['image_url'])
-            logger.info(f"Attempting to load image for product {product_id} at: {image_path}")
-            if not os.path.exists(image_path):
-                logger.warning(f"Image not found for product {product_id}: {image_path}")
-                image_path = os.path.join(os.path.dirname(__file__), 'images/default.jpg')
-
-            with open(image_path, 'rb') as photo:
-                if is_inline:
-                    await query.edit_message_media(
-                        media=InputFile(photo, filename=f"{product['name']}.jpg"),
-                        reply_markup=InlineKeyboardMarkup(keyboard)
-                    )
-                    await query.edit_message_caption(caption=caption, reply_markup=InlineKeyboardMarkup(keyboard))
+                await query.edit_message_text(text=text, reply_markup=reply_markup, parse_mode=parse_mode)
+            elif message:
+                if message.photo:
+                    await message.edit_caption(caption=text, reply_markup=reply_markup, parse_mode=parse_mode)
                 else:
-                    if query.message:
-                        await query.message.reply_photo(
-                            photo=InputFile(photo),
-                            caption=caption,
-                            reply_markup=InlineKeyboardMarkup(keyboard)
-                        )
-                        try:
-                            await query.message.delete()
-                        except TelegramError as e:
-                            logger.warning(f"Failed to delete message for product {product_id}: {e}")
-                    else:
-                        await context.bot.send_photo(
-                            chat_id=user_id,
-                            photo=InputFile(photo),
-                            caption=caption,
-                            reply_markup=InlineKeyboardMarkup(keyboard)
-                        )
-        except (FileNotFoundError, TelegramError) as e:
-            logger.error(f"Error sending image for product {product_id}: {e}", exc_info=True)
-            await edit_or_reply(
-                f"{caption}\n⚠️ Image not available.",
+                    await message.edit_text(text=text, reply_markup=reply_markup, parse_mode=parse_mode)
+        except TelegramError as e:
+            if "Message is not modified" not in str(e):
+                logger.error(f"Error editing message for user {user_id}: {e}", exc_info=True)
+
+    # --- Callback Logic --- 
+    next_state = None # Default to staying in the same state or ending
+    try:
+        db.connect() # Sync DB connect
+
+        if data == "main_menu":
+            keyboard = [
+                [InlineKeyboardButton(category, callback_data=f"platform:{category}") for category in CATEGORIES],
+                [InlineKeyboardButton("🛒 View Cart", callback_data="view_cart")],
+                [InlineKeyboardButton("🔍 Search Games", switch_inline_query_current_chat="")]
+            ]
+            await edit_message(
+                "Browse games by platform, view your cart, or search.",
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
-        return None
-    
-    elif data.startswith("add_to_cart:"):
-        product_id = int(data.split(":", 1)[1])
-        context.user_data['selected_product_id'] = product_id
-        product = await get_product_by_id(product_id, db)
-        
-        if not product:
-            await edit_or_reply(
-                "Product not found. Try browsing again!",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]])
-            )
-            return None
-        
-        if is_inline or is_photo:
-            await context.bot.send_message(
-                chat_id=user_id,
-                text=f"How many units of {product['name']} would you like to add to your cart? (Available: {product['stock']})",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data="main_menu")]])
-            )
-            if is_inline:
-                await query.edit_message_text(
-                    f"✅ Please check your chat with the bot to select quantity for {product['name']}.",
-                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]])
-                )
-            elif is_photo:
-                await query.message.edit_caption(
-                    caption=f"✅ Please check your chat to select quantity for {product['name']}.",
-                    reply_markup=InlineKeyboardMarkup(keyboard)
-                )
-            return SELECT_QUANTITY
-        else:
-            await edit_or_reply(
-                f"How many units of {product['name']} would you like to add to your cart? (Available: {product['stock']})",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data="main_menu")]])
-            )
-            return SELECT_QUANTITY
-    
-    elif data.startswith("remove_from_cart:"):
-        product_id = int(data.split(":", 1)[1])
-        try:
-            await db.remove_from_cart(user_id, product_id)
-            cart_items = await db.get_cart(user_id)
-            
+            next_state = ConversationHandler.END
+
+        elif data == "view_cart":
+            cart_items = db.get_cart(user_id)
             if not cart_items:
-                await edit_or_reply(
+                await edit_message(
                     "Your cart is empty. Browse games or search!",
                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]])
                 )
-                return None
-            
-            total_price = 0
-            cart_text = "🛒 Your Cart:\n\n"
-            keyboard = []
-            for item in cart_items:
-                item_price = float(item['price'])
-                item_total = item_price * item['quantity']
-                total_price += item_total
-                cart_text += (
-                    f"🎮 {item['name']} ({', '.join(item['platform'])})\n"
-                    f"Quantity: {item['quantity']}\n"
-                    f"Price: {format_price(item_price)} each\n"
-                    f"Subtotal: {format_price(item_total)}\n\n"
-                )
-                keyboard.append([InlineKeyboardButton(f"❌ Remove {item['name']}", callback_data=f"remove_from_cart:{item['product_id']}")])
-            
-            cart_text += f"💰 Total: {format_price(total_price)}"
-            keyboard.extend([
-                [InlineKeyboardButton("✅ Confirm Order", callback_data="confirm_order")],
-                [InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]
-            ])
-            await edit_or_reply(cart_text, reply_markup=InlineKeyboardMarkup(keyboard))
-            return CONFIRM_ORDER
-        except Exception as e:
-            logger.error(f"Error removing product {product_id} from cart for user {user_id}: {e}", exc_info=True)
-            await edit_or_reply(
-                "❌ Error removing item. Please try again.",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]])
-            )
-            return None
-    
-    elif data == "confirm_order":
-        cart_items = await db.get_cart(user_id)
-        
-        if not cart_items:
-            await edit_or_reply(
-                "Your cart is empty. Add some games first!",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]])
-            )
-            return None
-        
-        total_price = 0
-        for item in cart_items:
-            item_price = float(item['price'])
-            item_total = item_price * item['quantity']
-            total_price += item_total
-        
-        try:
-            logger.info(f"Creating order for user {user_id} with {len(cart_items)} items, total: {total_price}")
-            order_id = await db.create_order(user_id, total_price, cart_items)
-            context.user_data['order_id'] = order_id
-            context.user_data['total_price'] = total_price
-            context.user_data['cart_items'] = cart_items
-            logger.info(f"Created order {order_id} for user {user_id}")
-            await edit_or_reply(
-                "✅ Order created! Please provide your full name.",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("Cancel Order", callback_data="cancel_order")]
+            else:
+                total_price = sum(float(item["price"]) * item["quantity"] for item in cart_items)
+                cart_text = "🛒 **Your Cart:**\n\n"
+                keyboard = []
+                for item in cart_items:
+                    try: platform_display = json.loads(item["platform"])[0]
+                    except: platform_display = item["platform"]
+                    item_price = float(item["price"])
+                    item_total = item_price * item["quantity"]
+                    cart_text += (
+                        f"🎮 **{item["name"]}** ({platform_display})\n"
+                        f"   Quantity: {item["quantity"]}\n"
+                        f"   Price: {format_price(item_price)} each\n"
+                        f"   Subtotal: {format_price(item_total)}\n\n"
+                    )
+                    keyboard.append([InlineKeyboardButton(f"❌ Remove {item["name"]}", callback_data=f"remove_from_cart:{item["product_id"]}")])
+                cart_text += f"💰 **Total: {format_price(total_price)}**"
+                keyboard.extend([
+                    [InlineKeyboardButton("✅ Confirm Order", callback_data="confirm_order")],
+                    [InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]
                 ])
-            )
-            return COLLECT_NAME
-        except ValueError as e:
-            logger.error(f"Order creation failed for user {user_id}: {e}", exc_info=True)
-            await edit_or_reply(
-                f"❌ Order failed: {e}",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]])
-            )
-            return None
-        except Exception as e:
-            logger.error(f"Unexpected error creating order for user {user_id}: {e}", exc_info=True)
-            await edit_or_reply(
-                "❌ An error occurred while creating the order. Please try again.",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]])
-            )
-            return None
-    
-    elif data == "cancel_order":
-        order_id = context.user_data.get('order_id')
-        if order_id:
-            try:
-                await db.cancel_order(order_id)
-                context.user_data.clear()
-                await edit_or_reply(
-                    "✅ Order cancelled.",
+                await edit_message(cart_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
+
+        elif data.startswith("platform:"):
+            platform_name = data.split(":", 1)[1]
+            products = db.get_products_by_platform(platform_name)
+            if not products:
+                await edit_message(
+                    f"No games found for {platform_name}. Try another platform!",
                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]])
                 )
-            except Exception as e:
-                logger.error(f"Error cancelling order {order_id} for user {user_id}: {e}", exc_info=True)
-                await edit_or_reply(
-                    "❌ Error cancelling order. Please try again.",
+            else:
+                keyboard = [
+                    [InlineKeyboardButton(product["name"], callback_data=f"product:{product["id"]}")]
+                    for product in products
+                ]
+                keyboard.append([InlineKeyboardButton("🔙 Back to Platforms", callback_data="main_menu")])
+                await edit_message(
+                    f"Games for **{platform_name}**:",
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode=ParseMode.MARKDOWN
+                )
+
+        elif data.startswith("product:"):
+            product_id = int(data.split(":", 1)[1])
+            product = db.get_product(product_id)
+            if not product:
+                await edit_message(
+                    "Product not found. It might be out of stock or removed.",
                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]])
                 )
-        else:
-            await edit_or_reply(
-                "❌ No order to cancel.",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]])
-            )
-        return None
+            else:
+                try: platform_display = json.loads(product["platform"])[0]
+                except: platform_display = product["platform"]
+                caption = (
+                    f"🎮 **{product["name"]}**\n"
+                    f"Platform: {platform_display}\n"
+                    f"Price: {format_price(product["price"])}\n"
+                    f"Stock: {product["stock"]}\n\n"
+                    f"{product["description"] or "No description available."}"
+                )
+                keyboard = [
+                    [InlineKeyboardButton("🛒 Add to Cart", callback_data=f"add_to_cart:{product_id}")],
+                    [InlineKeyboardButton("🔙 Back", callback_data="main_menu")]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                image_path_relative = product.get("image_url", "images/default.jpg")
+                image_path_abs = os.path.join(os.path.dirname(__file__), os.pardir, image_path_relative)
+                default_image_abs = os.path.join(os.path.dirname(__file__), os.pardir, "images/default.jpg")
+                image_to_send = default_image_abs
+                if os.path.exists(image_path_abs):
+                    image_to_send = image_path_abs
+                elif not os.path.exists(default_image_abs):
+                    logger.warning(f"Product image {image_path_abs} and default {default_image_abs} not found.")
+                    await edit_message(f"{caption}\n\n⚠️ Image not available.", reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
+                    return next_state
+                try:
+                    with open(image_to_send, "rb") as photo_file:
+                        if message and not message.photo:
+                            await message.reply_photo(
+                                photo=photo_file,
+                                caption=caption,
+                                reply_markup=reply_markup,
+                                parse_mode=ParseMode.MARKDOWN
+                            )
+                            try: await message.delete()
+                            except TelegramError as e: logger.warning(f"Could not delete old text message: {e}")
+                        elif message and message.photo:
+                             await message.edit_caption(caption=caption, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
+                        else:
+                             await context.bot.send_photo(
+                                chat_id=user_id,
+                                photo=photo_file,
+                                caption=caption,
+                                reply_markup=reply_markup,
+                                parse_mode=ParseMode.MARKDOWN
+                            )
+                except (FileNotFoundError, TelegramError) as e:
+                    logger.error(f"Error sending image {image_to_send} for product {product_id}: {e}", exc_info=True)
+                    await edit_message(f"{caption}\n\n⚠️ Image could not be sent.", reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
+
+        elif data.startswith("add_to_cart:"):
+            product_id = int(data.split(":", 1)[1])
+            product = db.get_product(product_id)
+            if not product or product["stock"] <= 0:
+                await edit_message(
+                    "Sorry, this product is out of stock or unavailable.",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]])
+                )
+            else:
+                context.user_data["selected_product_id"] = product_id
+                await edit_message(
+                    f"Selected **{product["name"]}**. Please reply with the quantity you want to add (1-{product["stock"]}).",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data="cancel_op")]])
+                )
+                next_state = SELECT_QUANTITY
+
+        elif data.startswith("remove_from_cart:"):
+            product_id = int(data.split(":", 1)[1])
+            success = db.remove_from_cart(user_id, product_id)
+            if success:
+                await query.answer("Item removed from cart.")
+                cart_items = db.get_cart(user_id)
+                if not cart_items:
+                    await edit_message("Cart is now empty.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]]) )
+                else:
+                    total_price = sum(float(item["price"]) * item["quantity"] for item in cart_items)
+                    cart_text = "🛒 **Your Cart:**\n\n"
+                    keyboard = []
+                    for item in cart_items:
+                        try: platform_display = json.loads(item["platform"])[0]
+                        except: platform_display = item["platform"]
+                        item_price = float(item["price"])
+                        item_total = item_price * item["quantity"]
+                        cart_text += f"🎮 **{item["name"]}** ({platform_display})\n   Qty: {item["quantity"]} @ {format_price(item_price)} = {format_price(item_total)}\n\n"
+                        keyboard.append([InlineKeyboardButton(f"❌ Remove {item["name"]}", callback_data=f"remove_from_cart:{item["product_id"]}")])
+                    cart_text += f"💰 **Total: {format_price(total_price)}**"
+                    keyboard.extend([
+                        [InlineKeyboardButton("✅ Confirm Order", callback_data="confirm_order")],
+                        [InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]
+                    ])
+                    await edit_message(cart_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
+            else:
+                await query.answer("Error removing item.", show_alert=True)
+
+        elif data == "confirm_order":
+            cart_items = db.get_cart(user_id)
+            if not cart_items:
+                await edit_message("Your cart is empty.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]]) )
+            else:
+                stock_ok = True
+                for item in cart_items:
+                    product = db.get_product(item["product_id"])
+                    if not product or product["stock"] < item["quantity"]:
+                        stock_ok = False
+                        await edit_message(f"⚠️ Insufficient stock for **{item["name"]}**. Available: {product["stock"] if product else 0}. Please remove it or reduce quantity.", parse_mode=ParseMode.MARKDOWN)
+                        break
+                if stock_ok:
+                    total_price = sum(float(item["price"]) * item["quantity"] for item in cart_items)
+                    context.user_data["total_price"] = total_price
+                    context.user_data["cart_items"] = cart_items
+                    await edit_message(
+                        "To complete your order, please provide your full name.",
+                        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel Order", callback_data="cancel_order")]])
+                    )
+                    next_state = COLLECT_NAME
+
+        elif data == "cancel_order":
+            context.user_data.clear()
+            await edit_message("Order cancelled.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]]) )
+            next_state = ConversationHandler.END
+            
+        elif data == "cancel_op":
+            context.user_data.pop("selected_product_id", None)
+            await edit_message("Operation cancelled.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]]) )
+            next_state = ConversationHandler.END
+
+    except Exception as e:
+        logger.error(f"Error in handle_callback for user {user_id}, data {data}: {e}", exc_info=True)
+        try:
+            await edit_message("❌ An unexpected error occurred. Please try again later.")
+        except Exception as inner_e:
+            logger.error(f"Failed to send error message to user {user_id}: {inner_e}")
+        next_state = ConversationHandler.END
+    finally:
+        if db: db.disconnect() # Sync DB disconnect
+
+    return next_state
+
+# --- Conversation Handlers (Must be async) --- 
 
 async def select_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[int]:
-    """Handle quantity input for adding to cart."""
+    """Handle quantity input during the add-to-cart conversation."""
     user_id = update.effective_user.id
-    product_id = context.user_data.get('selected_product_id')
-    
+    product_id = context.user_data.get("selected_product_id")
+    message = update.message
+
     if not product_id:
-        await update.message.reply_text(
-            "❌ No product selected. Please try again.",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]])
-        )
-        return ConversationHandler.END
-    
-    db = context.bot_data.get('db')
-    if not db:
-        db = Database()
-        context.bot_data['db'] = db
-    
-    product = await db.get_product(product_id)
-    
-    if not product:
-        await update.message.reply_text(
-            "❌ Product not found. Please try again.",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]])
-        )
-        return ConversationHandler.END
-    
-    quantity_text = update.message.text.strip()
-    try:
-        quantity = int(quantity_text)
-        if quantity <= 0:
-            raise ValueError("Quantity must be positive")
-        if quantity > product['stock']:
-            raise ValueError(f"Only {product['stock']} units available")
-        
-        await db.add_to_cart(user_id, product_id, quantity)
-        await update.message.reply_text(
-            f"✅ Added {quantity} unit(s) of {product['name']} to your cart.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🛒 View Cart", callback_data="view_cart")],
-                [InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]
-            ])
-        )
-        return ConversationHandler.END
-    except ValueError as e:
-        logger.error(f"Invalid quantity input by user {user_id}: {quantity_text} - {e}", exc_info=True)
-        await update.message.reply_text(
-            f"❌ Invalid input: {e}. Please enter a valid number (e.g., 1, 2).",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data="main_menu")]])
-        )
-        return SELECT_QUANTITY
-    except Exception as e:
-        logger.error(f"Error adding to cart for user {user_id}, product {product_id}: {e}", exc_info=True)
-        await update.message.reply_text(
-            "❌ An error occurred. Please try again.",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]])
-        )
+        await message.reply_text("❌ No product selected. Please try adding again.")
         return ConversationHandler.END
 
-async def collect_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[int]:
-    """Collect user's full name."""
-    user_id = update.effective_user.id
-    order_id = context.user_data.get('order_id')
-    
-    if not order_id:
-        logger.error(f"No order_id found for user {user_id} in COLLECT_NAME")
-        await update.message.reply_text(
-            "❌ No order found. Please start a new order.",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]])
-        )
+    db = get_db(context)
+    if not db:
+        await message.reply_text("Error: Bot database is not configured.")
         return ConversationHandler.END
-    
-    text = update.message.text.strip()
-    if not text:
-        await update.message.reply_text(
-            "❌ Please provide a valid name.",
+
+    next_state = SELECT_QUANTITY
+    try:
+        db.connect() # Sync DB connect
+        product = db.get_product(product_id)
+        if not product:
+            await message.reply_text("❌ Product not found.")
+            next_state = ConversationHandler.END
+        else:
+            quantity_text = message.text.strip()
+            try:
+                quantity = int(quantity_text)
+                if quantity <= 0:
+                    await message.reply_text("Quantity must be positive. Please enter a valid number.")
+                elif quantity > product["stock"]:
+                    await message.reply_text(f"Only {product["stock"]} units available. Please enter a lower quantity.")
+                else:
+                    success = db.add_to_cart(user_id, product_id, quantity)
+                    if success:
+                        await message.reply_text(
+                            f"✅ Added {quantity} unit(s) of **{product["name"]}** to your cart.",
+                            reply_markup=InlineKeyboardMarkup([
+                                [InlineKeyboardButton("🛒 View Cart", callback_data="view_cart")],
+                                [InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]
+                            ]),
+                            parse_mode=ParseMode.MARKDOWN
+                        )
+                        context.user_data.pop("selected_product_id", None)
+                        next_state = ConversationHandler.END
+                    else:
+                        await message.reply_text("❌ Error adding item to cart. Please try again.")
+                        next_state = ConversationHandler.END
+            except ValueError:
+                await message.reply_text("Invalid input. Please enter a number.")
+            except Exception as e:
+                 logger.error(f"Error processing quantity for user {user_id}: {e}", exc_info=True)
+                 await message.reply_text("❌ An error occurred.")
+                 next_state = ConversationHandler.END
+    except Exception as e:
+        logger.error(f"Error in select_quantity for user {user_id}: {e}", exc_info=True)
+        await message.reply_text("❌ An unexpected error occurred.")
+        next_state = ConversationHandler.END
+    finally:
+        if db: db.disconnect() # Sync DB disconnect
+
+    return next_state
+
+async def collect_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[int]:
+    """Collect user\s full name for the order."""
+    user_id = update.effective_user.id
+    cart_items = context.user_data.get("cart_items")
+    message = update.message
+
+    if not cart_items:
+        logger.warning(f"User {user_id} reached COLLECT_NAME without cart items in context.")
+        await message.reply_text("❌ No order in progress. Please view your cart first.")
+        return ConversationHandler.END
+
+    name = message.text.strip()
+    if not name or len(name) < 3:
+        await message.reply_text(
+            "❌ Please provide a valid full name.",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel Order", callback_data="cancel_order")]])
         )
         return COLLECT_NAME
-    
-    context.user_data['user_details'] = {'name': text}
-    logger.info(f"Collected name for user {user_id}, order {order_id}: {text}")
-    await update.message.reply_text(
+
+    context.user_data["user_details"] = {"name": name}
+    logger.info(f"Collected name for user {user_id}: {name}")
+    await message.reply_text(
         "Please provide your email address.",
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel Order", callback_data="cancel_order")]])
     )
     return COLLECT_EMAIL
 
 async def collect_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[int]:
-    """Collect user's email address."""
+    """Collect user\s email address."""
     user_id = update.effective_user.id
-    order_id = context.user_data.get('order_id')
-    
-    if not order_id:
-        logger.error(f"No order_id found for user {user_id} in COLLECT_EMAIL")
-        await update.message.reply_text(
-            "❌ No order found. Please start a new order.",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]])
-        )
+    user_details = context.user_data.get("user_details")
+    message = update.message
+
+    if not user_details or "name" not in user_details:
+        logger.warning(f"User {user_id} reached COLLECT_EMAIL without name in context.")
+        await message.reply_text("❌ Order process error. Please start again.")
         return ConversationHandler.END
-    
-    text = update.message.text.strip()
-    if not re.match(r"[^@]+@[^@]+\.[^@]+", text):
-        await update.message.reply_text(
-            "❌ Invalid email format. Please provide a valid email address.",
+
+    email = message.text.strip()
+    if not re.match(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$	", email):
+        await message.reply_text(
+            "❌ Invalid email format. Please provide a valid email address (e.g., user@example.com).",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel Order", callback_data="cancel_order")]])
         )
         return COLLECT_EMAIL
-    
-    context.user_data['user_details']['email'] = text
-    logger.info(f"Collected email for user {user_id}, order {order_id}: {text}")
-    await update.message.reply_text(
-        "Please provide your phone number (e.g., +251912345678 or 0912345678).",
+
+    context.user_data["user_details"]["email"] = email
+    logger.info(f"Collected email for user {user_id}: {email}")
+    await message.reply_text(
+        "Please provide your Ethiopian phone number (e.g., 0912345678 or +251912345678).",
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel Order", callback_data="cancel_order")]])
     )
     return COLLECT_PHONE
 
 async def collect_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[int]:
-    """Collect user's phone number."""
+    """Collect user\s phone number."""
     user_id = update.effective_user.id
-    order_id = context.user_data.get('order_id')
-    phone = update.message.text.strip()
-    
-    if not order_id:
-        logger.error(f"No order_id found for user {user_id} in COLLECT_PHONE")
-        await update.message.reply_text(
-            "❌ No order found. Please start a new order.",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]])
-        )
+    user_details = context.user_data.get("user_details")
+    message = update.message
+
+    if not user_details or "email" not in user_details:
+        logger.warning(f"User {user_id} reached COLLECT_PHONE without email in context.")
+        await message.reply_text("❌ Order process error. Please start again.")
         return ConversationHandler.END
-    
+
+    phone = message.text.strip()
     if not is_valid_ethiopian_phone(phone):
-        await update.message.reply_text(
-            "⚠️ Please enter a valid Ethiopian phone number in the format +251912345678 or 0912345678.",
+        await message.reply_text(
+            "⚠️ Please enter a valid Ethiopian phone number (09... or +2519...).",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel Order", callback_data="cancel_order")]])
         )
         return COLLECT_PHONE
-        
-    context.user_data['user_details']['phone_number'] = phone
-    logger.info(f"Collected phone for user {user_id}, order {order_id}: {phone}")
-    await update.message.reply_text(
-        "Please provide your delivery address.",
+
+    context.user_data["user_details"]["phone_number"] = phone
+    logger.info(f"Collected phone for user {user_id}: {phone}")
+    await message.reply_text(
+        "Finally, please provide your full delivery address (City, Subcity, Woreda, House No./Specific Location).",
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel Order", callback_data="cancel_order")]])
     )
     return COLLECT_ADDRESS
 
 async def collect_address(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[int]:
-    """Collect user's delivery address, deduct stock, and finalize order."""
+    """Collect address, create order in DB, clear cart, send receipt."""
     user_id = update.effective_user.id
-    order_id = context.user_data.get('order_id')
-    total_price = context.user_data.get('total_price')
-    cart_items = context.user_data.get('cart_items')
-    
-    if not order_id:
-        logger.error(f"No order_id found for user {user_id} in COLLECT_ADDRESS")
-        await update.message.reply_text(
-            "❌ No order found. Please start a new order.",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]])
-        )
+    user_details = context.user_data.get("user_details")
+    cart_items = context.user_data.get("cart_items")
+    total_price = context.user_data.get("total_price")
+    message = update.message
+
+    if not all([user_details, cart_items, total_price is not None]):
+        logger.warning(f"User {user_id} reached COLLECT_ADDRESS with incomplete context.")
+        await message.reply_text("❌ Order process error. Please start again.")
         return ConversationHandler.END
-    
-    text = update.message.text.strip()
-    if not text:
-        await update.message.reply_text(
-            "❌ Please provide a valid delivery address.",
+
+    address = message.text.strip()
+    if not address or len(address) < 10:
+        await message.reply_text(
+            "❌ Please provide a more detailed delivery address.",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel Order", callback_data="cancel_order")]])
         )
         return COLLECT_ADDRESS
-    
-    db = context.bot_data.get('db')
+
+    user_details["delivery_address"] = address
+    user_details["telegram_username"] = update.effective_user.username or "N/A"
+
+    db = get_db(context)
     if not db:
-        db = Database()
-        context.bot_data['db'] = db
-    
-    # Deduct stock for each item
-    for item in cart_items:
-        product_id = item['product_id']
-        quantity = item['quantity']
-        success = await db.deduct_stock(product_id, quantity)
-        if not success:
-            await update.message.reply_text(
-                f"⚠️ Insufficient stock for {item['name']}. Please adjust your cart and try again.",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]])
+        await message.reply_text("Error: Bot database is not configured.")
+        return ConversationHandler.END
+
+    order_id = None
+    try:
+        db.connect() # Sync DB connect
+        order_id = db.create_order(user_id, total_price, cart_items, user_details)
+        if order_id is None:
+            await message.reply_text(
+                "❌ Failed to create order. This might be due to stock changes. Please check your cart and try again.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛒 View Cart", callback_data="view_cart")]])
             )
             return ConversationHandler.END
-    
-    # Clear cart
-    await db.clear_cart(user_id)
-    
-    # Update order details
-    details = context.user_data['user_details']
-    details['delivery_address'] = text
-    details['username'] = update.effective_user.username or "N/A"
-    
-    try:
-        await db.update_order_details(order_id, details)
-        
-        # Generate receipt
-        from datetime import datetime
+        logger.info(f"Order {order_id} created and finalized for user {user_id}.")
         receipt = (
-            f"🧾 Order Receipt #{order_id}\n"
-            f"Date: {datetime.now().strftime('%Y-%m-%d')}\n\n"
-            f"Customer Details:\n"
-            f"Name: {details['name']}\n"
-            f"Email: {details['email']}\n"
-            f"Phone: {details['phone_number']}\n"
-            f"Address: {details['delivery_address']}\n"
-            f"Username: {details['username']}\n\n"
-            f"Items:\n"
+            f"🧾 **Order Receipt #{order_id}**\n"
+            f"Date: {datetime.now().strftime("%Y-%m-%d %H:%M")}\n\n"
+            f"**Customer Details:**\n"
+            f" Name: {user_details["name"]}\n"
+            f" Email: {user_details["email"]}\n"
+            f" Phone: {user_details["phone_number"]}\n"
+            f" Address: {user_details["delivery_address"]}\n"
+            f" Telegram: @{user_details["telegram_username"]}\n\n"
+            f"**Items:**\n"
         )
         for item in cart_items:
-            item_price = float(item['price'])
-            item_total = item_price * item['quantity']
+            try: platform_display = json.loads(item["platform"])[0]
+            except: platform_display = item["platform"]
+            item_price = float(item["price"])
+            item_total = item_price * item["quantity"]
             receipt += (
-                f"🎮 {item['name']} ({', '.join(item['platform'])})\n"
-                f"Quantity: {item['quantity']}\n"
-                f"Price: {format_price(item_price)} each\n"
-                f"Subtotal: {format_price(item_total)}\n\n"
+                f" 🎮 {item["name"]} ({platform_display})\n"
+                f"    Qty: {item["quantity"]} @ {format_price(item_price)} = {format_price(item_total)}\n"
             )
         receipt += (
-            f"💰 Total: {format_price(total_price)}\n\n"
-            "Thank you for your purchase! Your order will be processed soon."
+            f"\n💰 **Total: {format_price(total_price)}**\n\n"
+            "Thank you for your purchase! Your order is being processed. We will contact you soon."
         )
-        
-        await update.message.reply_text(
+        await message.reply_text(
             receipt,
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]])
         )
-        logger.info(f"Order {order_id} finalized for user {user_id}: {details}")
         context.user_data.clear()
         return ConversationHandler.END
     except Exception as e:
-        logger.error(f"Error finalizing order {order_id} for user {user_id}: {e}", exc_info=True)
-        await update.message.reply_text(
-            "❌ Error finalizing order. Please try again.",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel Order", callback_data="cancel_order")]])
-        )
-        return ConversationHandler.END
-
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Cancel the current operation or order."""
-    user_id = update.effective_user.id
-    order_id = context.user_data.get('order_id')
-    
-    db = context.bot_data.get('db')
-    if not db:
-        db = Database()
-        context.bot_data['db'] = db
-    
-    if order_id:
-        try:
-            await db.cancel_order(order_id)
-            await update.message.reply_text(
-                "✅ Order cancelled.",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]])
-            )
-        except Exception as e:
-            logger.error(f"Error cancelling order {order_id} for user {user_id}: {e}", exc_info=True)
-            await update.message.reply_text(
-                "❌ Error cancelling order. Please try again.",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]])
-            )
-    else:
-        await update.message.reply_text(
-            "✅ Operation cancelled.",
+        logger.error(f"Error finalizing order for user {user_id} (Order ID might be {order_id}): {e}", exc_info=True)
+        if order_id and db.conn:
+            try: db.cancel_order(order_id)
+            except: pass
+        await message.reply_text(
+            "❌ An unexpected error occurred while finalizing your order. Please contact support if issues persist.",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]])
         )
-    
+        return ConversationHandler.END
+    finally:
+        if db: db.disconnect() # Sync DB disconnect
+
+async def cancel_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Generic cancel handler for conversations."""
+    user_id = update.effective_user.id
+    logger.info(f"User {user_id} cancelled conversation.")
     context.user_data.clear()
+    reply_target = update.message or update.callback_query.message
+    if reply_target:
+        await reply_target.reply_text(
+            "Operation cancelled.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]])
+        )
     return ConversationHandler.END
 
+# --- Inline Query Handler (Must be async) --- 
+
 async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle inline queries for game search."""
-    query = update.inline_query.query.strip()
+    """Handle inline queries for searching products."""
+    query_text = update.inline_query.query
     user_id = update.inline_query.from_user.id
-    logger.info(f"Inline query by user {user_id}: '{query}'")
-    
-    if not query:
-        await update.inline_query.answer([], cache_time=10)
-        logger.info(f"Empty inline query by user {user_id}")
+    logger.info(f"Received inline query from user {user_id}: 	{query_text}	")
+
+    if not query_text or len(query_text) < 2:
+        await update.inline_query.answer([], cache_time=10, switch_pm_text="Type 2+ chars to search games", switch_pm_parameter="search_help")
         return
-    
+
+    db = get_db(context)
+    if not db:
+        logger.error("Inline query failed: DB not configured.")
+        await update.inline_query.answer([], cache_time=5)
+        return
+
+    results = []
     try:
-        db = context.bot_data.get('db')
-        if not db:
-            db = Database()
-            context.bot_data['db'] = db
-        products = await search_products(query, db)
-        results = []
-        for product in products[:50]:
-            description = (
-                f"Price: {format_price(product['price'])}\n"
-                f"Platform: {', '.join(product['platform'])}\n"
-                f"Stock: {product['stock']}"
-            )
+        db.connect() # Sync DB connect
+        products = db.search_products(query_text)
+        logger.info(f"Found {len(products)} products for inline query 	{query_text}	")
+        for product in products:
+            try: platform_display = json.loads(product["platform"])[0]
+            except: platform_display = product["platform"]
+            thumb_url = None # Needs public URL for thumbnail
             results.append(
                 InlineQueryResultArticle(
-                    id=str(product['id']),
-                    title=product['name'],
-                    description=description,
+                    id=str(product["id"]),
+                    title=f"{product["name"]} ({platform_display})",
+                    description=f"{format_price(product["price"])} - Stock: {product["stock"]}\n{product["description"][:50]}...",
                     input_message_content=InputTextMessageContent(
-                        f"🎮 {product['name']}\n{description}\nDescription: {product['description']}"
+                        f"Check out this game: **{product["name"]}**!",
+                        parse_mode=ParseMode.MARKDOWN
                     ),
                     reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("🛒 Add to Cart", callback_data=f"add_to_cart:{product['id']}")]
-                    ])
+                        # Note: Callback data triggers handle_callback
+                        [InlineKeyboardButton("🛒 Add to Cart", callback_data=f"add_to_cart:{product["id"]}")],
+                        [InlineKeyboardButton("ℹ️ View Details", callback_data=f"product:{product["id"]}")]
+                    ]),
+                    thumbnail_url=thumb_url,
                 )
             )
-        await update.inline_query.answer(results, cache_time=10)
-        logger.info(f"Inline query by user {user_id}: '{query}' returned {len(results)} results")
     except Exception as e:
-        logger.error(f"Error in inline query '{query}' by user_id {user_id}: {e}", exc_info=True)
-        await update.inline_query.answer([], cache_time=10)
+        logger.error(f"Error processing inline query 	{query_text}	 for user {user_id}: {e}", exc_info=True)
+    finally:
+        if db: db.disconnect() # Sync DB disconnect
 
-async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle errors."""
-    logger.error(f"Update {update} caused error: {context.error}", exc_info=True)
-    if update and (update.message or update.callback_query):
+    await update.inline_query.answer(results[:50], cache_time=10)
+
+# --- Error Handler (Must be async) --- 
+
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Log Errors caused by Updates."""
+    logger.error(msg="Exception while handling an update:", exc_info=context.error)
+    # Add user notification if appropriate and possible
+    if isinstance(update, Update) and update.effective_user:
         try:
-            if update.callback_query:
-                await update.callback_query.answer()
-                query = update.callback_query
-                is_inline = bool(query.inline_message_id)
-                is_photo = query.message.photo if query.message else False
-                text = "❌ An error occurred. Please try again."
-                reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]])
-                if is_inline:
-                    await query.edit_message_text(text=text, reply_markup=reply_markup)
-                elif is_photo:
-                    await query.message.edit_caption(caption=text, reply_markup=reply_markup)
-                elif query.message:
-                    await query.message.edit_text(text=text, reply_markup=reply_markup)
-                else:
-                    await context.bot.send_message(
-                        chat_id=query.from_user.id,
-                        text=text,
-                        reply_markup=reply_markup
-                    )
-            elif update.message:
-                await update.message.reply_text(
-                    text="❌ An error occurred! Please try again.",
-                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]])
-                )
-        except TelegramError as e:
-            logger.error(f"Error sending error message: {e}", exc_info=True)
+            await context.bot.send_message(
+                chat_id=update.effective_user.id,
+                text="Sorry, an internal error occurred. Please try again later or contact support."
+            )
+        except Exception as e:
+            logger.error(f"Failed to send error message to user {update.effective_user.id}: {e}")
 
-# Define command handlers
+# --- Handler Definitions --- 
+# Ensure all handlers passed to TelegramApplication are async
 command_handlers = [
     CommandHandler("start", start),
     CommandHandler("search", search_command),
     CommandHandler("cart", cart_command),
-    CommandHandler("cancel", cancel),
+    CommandHandler("cancel", cancel_conversation),
 ]
 
-# Define conversation handler
+callback_query_handler = CallbackQueryHandler(handle_callback)
+inline_query_handler = InlineQueryHandler(inline_query)
+
 conv_handler = ConversationHandler(
-    entry_points=[
-        CallbackQueryHandler(handle_callback, pattern="^add_to_cart:.*$"),
-        CallbackQueryHandler(handle_callback, pattern="^confirm_order$"),
-    ],
+    entry_points=[CallbackQueryHandler(handle_callback)],
     states={
         SELECT_QUANTITY: [MessageHandler(filters.TEXT & ~filters.COMMAND, select_quantity)],
-        CONFIRM_ORDER: [CallbackQueryHandler(handle_callback, pattern="^(confirm_order|main_menu|remove_from_cart:.*)$")],
         COLLECT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, collect_name)],
         COLLECT_EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, collect_email)],
         COLLECT_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, collect_phone)],
         COLLECT_ADDRESS: [MessageHandler(filters.TEXT & ~filters.COMMAND, collect_address)],
     },
     fallbacks=[
-        CommandHandler("cancel", cancel),
-        CallbackQueryHandler(handle_callback, pattern="^cancel_order$"),
-        CallbackQueryHandler(handle_callback, pattern="^main_menu$"),
+        CallbackQueryHandler(handle_callback),
+        CommandHandler("cancel", cancel_conversation),
+        CommandHandler("start", start),
     ],
-    per_message=False
+    allow_reentry=True,
 )
 
-# Define callback query handler
-callback_query_handler = CallbackQueryHandler(handle_callback)
-
-# Define inline query handler
-inline_query_handler = InlineQueryHandler(inline_query)

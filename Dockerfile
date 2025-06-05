@@ -1,18 +1,38 @@
-FROM python:3.10-slim
+# Use an appropriate Python version available on Render
+FROM python:3.11-slim
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE 1
+ENV PYTHONUNBUFFERED 1
+ENV POETRY_VERSION=1.7.1
+
+# Install poetry
+RUN pip install "poetry==$POETRY_VERSION"
 
 # Set working directory
 WORKDIR /app
 
-# Copy requirements and install dependencies
-COPY admin_dashboard/requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+# Copy only dependency definition files first
+COPY pyproject.toml poetry.lock* ./
 
-# Copy the entire project
+# Install project dependencies
+# --no-root: Don\t install the project itself as editable
+# --no-interaction: Do not ask any interactive questions
+# --no-ansi: Disable ANSI output
+RUN poetry install --no-root --no-interaction --no-ansi --only main
+
+# Create the instance directory for databases and sessions
+# Ensure the directory has the correct permissions
+RUN mkdir -p instance && chmod 755 instance
+
+# Copy the entire project source code
 COPY . .
 
-# Set environment variables
-ENV PYTHONUNBUFFERED=1
-ENV PORT=8000
+# Expose the port the app runs on (Render sets PORT env var)
+# Gunicorn will bind to 0.0.0.0:$PORT automatically
+# EXPOSE 10000 # Or Render\s default, Gunicorn uses $PORT
 
-# Run Gunicorn for the admin dashboard
-CMD gunicorn --bind 0.0.0.0:$PORT --workers=4 wsgi:app
+# Command to run the application using Gunicorn
+# Render sets the PORT environment variable, Gunicorn uses it by default.
+# Use the virtual environment created by Poetry
+CMD ["poetry", "run", "gunicorn", "wsgi:app"]

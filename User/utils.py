@@ -2,10 +2,9 @@ import logging
 import re
 
 def setup_logging():
-    """Configure logging for the application."""
     logging.basicConfig(
-        filename='User/bot.log',
-        level=logging.INFO,
+        filename='/tmp/bot.log',
+        level=logging.DEBUG,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
 
